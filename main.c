@@ -3,6 +3,11 @@
 #include <bluetooth/hci.h>
 #include "mgmt.h"
 
+#include <sys/select.h>
+#include <sys/time.h>
+#include <sys/types.h>
+
+#include <stdbool.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
@@ -30,6 +35,53 @@ int mgmt_create(void)
 	}
 
 	return fd;
+}
+
+#define BUF_SIZE 65553
+
+void print_device_found(int fd)
+{
+    uint8_t buffer[BUF_SIZE];
+    fd_set read_fd;
+
+    FD_ZERO(&read_fd);
+    FD_SET(fd, &read_fd);
+
+    struct iovec iov = {
+        .iov_base = buffer,
+        .iov_len = sizeof(buffer)
+    };
+
+    while (true)
+    {
+        if (select(fd + 1, &read_fd, NULL, NULL, NULL) > 0)
+        {
+            printf("Socket available for read\n");
+            if (readv(fd, &iov, 1) < 0)
+            {
+                printf("Cannot read from socket\n");
+            }
+
+            const struct mgmt_hdr *hdr = (void *)buffer;
+            
+            if (btohs(hdr->opcode) == 0x12)
+            {
+                printf("Device Found Event on %hu. Data size - %hu\n", btohs(hdr->index), btohs(hdr->len));
+                uint8_t *addr_ptr = buffer + MGMT_HDR_SIZE;
+
+                for (size_t i = 0, j = 5; i < j; ++i, --j)
+                {
+                    uint8_t tmp = addr_ptr[j];
+                    addr_ptr[j] = addr_ptr[i];
+                    addr_ptr[i] = tmp;
+                }
+
+                char *addr = batostr((void *)(addr_ptr));
+                printf("Device: %s\n", addr);
+                free(addr);
+            }
+        }
+    }
 }
 
 int main(void)
@@ -86,6 +138,8 @@ int main(void)
         uint16_t rev = bt_get_le16(version + 1);
         printf("Version: %d, Revision %d\n", v, rev);
     }
+
+    print_device_found(ble_sock);
 
     close(ble_sock);
     return 0;
